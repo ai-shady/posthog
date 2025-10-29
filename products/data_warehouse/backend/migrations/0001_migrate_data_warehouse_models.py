@@ -21,7 +21,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
-        ("posthog", "0893_migrate_data_warehouse_models"),
+        ("posthog", "0894_migrate_data_warehouse_models"),
     ]
 
     operations = [
