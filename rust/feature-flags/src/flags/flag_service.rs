@@ -31,6 +31,7 @@ pub trait CacheOrFallback<K: ?Sized, R> {
         redis_writer: Arc<dyn RedisClient + Send + Sync>,
         key: &K,
         result: &R,
+        ttl_seconds: Option<u64>,
     ) -> Result<(), FlagError>;
 }
 
@@ -48,6 +49,7 @@ async fn cache_or_fallback<T, K, R>(
     pg_client: PostgresReader,
     key: &K,
     metrics: CacheMetrics,
+    ttl_seconds: Option<u64>,
 ) -> Result<(R, bool), FlagError>
 where
     T: CacheOrFallback<K, R>,
@@ -62,7 +64,10 @@ where
             inc(metrics.db_reads_counter, &[], 1);
 
             // Write to cache for future hits
-            if T::update_cache(redis_writer, key, &result).await.is_err() {
+            if T::update_cache(redis_writer, key, &result, ttl_seconds)
+                .await
+                .is_err()
+            {
                 inc(
                     metrics.cache_errors_counter,
                     &[("reason".to_string(), "redis_update_failed".to_string())],
@@ -112,8 +117,9 @@ impl CacheOrFallback<str, Team> for TeamCache {
         redis_writer: Arc<dyn RedisClient + Send + Sync>,
         _token: &str,
         team: &Team,
+        ttl_seconds: Option<u64>,
     ) -> Result<(), FlagError> {
-        Team::update_redis_cache(redis_writer, team).await
+        Team::update_redis_cache(redis_writer, team, ttl_seconds).await
     }
 }
 
@@ -141,8 +147,10 @@ impl CacheOrFallback<i64, (FeatureFlagList, bool)> for FlagsCache {
         redis_writer: Arc<dyn RedisClient + Send + Sync>,
         project_id: &i64,
         result: &(FeatureFlagList, bool),
+        ttl_seconds: Option<u64>,
     ) -> Result<(), FlagError> {
-        FeatureFlagList::update_flags_in_redis(redis_writer, *project_id, &result.0).await
+        FeatureFlagList::update_flags_in_redis(redis_writer, *project_id, &result.0, ttl_seconds)
+            .await
     }
 }
 
@@ -192,8 +200,9 @@ impl CacheOrFallback<str, (Team, String)> for TokenVerificationCache {
         redis_writer: Arc<dyn RedisClient + Send + Sync>,
         _token: &str,
         result: &(Team, String),
+        ttl_seconds: Option<u64>,
     ) -> Result<(), FlagError> {
-        Team::update_redis_cache(redis_writer, &result.0).await
+        Team::update_redis_cache(redis_writer, &result.0, ttl_seconds).await
     }
 }
 
@@ -203,6 +212,7 @@ async fn team_cache_or_fallback(
     redis_writer: Arc<dyn RedisClient + Send + Sync>,
     pg_client: PostgresReader,
     token: &str,
+    team_cache_ttl_seconds: Option<u64>,
 ) -> Result<(Team, bool), FlagError> {
     cache_or_fallback::<TeamCache, str, Team>(
         redis_reader,
@@ -213,6 +223,7 @@ async fn team_cache_or_fallback(
             db_reads_counter: DB_TEAM_READS_COUNTER,
             cache_errors_counter: TEAM_CACHE_ERRORS_COUNTER,
         },
+        team_cache_ttl_seconds,
     )
     .await
 }
@@ -223,6 +234,7 @@ async fn flags_cache_or_fallback(
     redis_writer: Arc<dyn RedisClient + Send + Sync>,
     pg_client: PostgresReader,
     project_id: i64,
+    flags_cache_ttl_seconds: Option<u64>,
 ) -> Result<(FeatureFlagList, bool, bool), FlagError> {
     let ((flags, had_deserialization_errors), was_cache_hit) =
         cache_or_fallback::<FlagsCache, i64, (FeatureFlagList, bool)>(
@@ -234,6 +246,7 @@ async fn flags_cache_or_fallback(
                 db_reads_counter: DB_FLAG_READS_COUNTER,
                 cache_errors_counter: FLAG_CACHE_ERRORS_COUNTER,
             },
+            flags_cache_ttl_seconds,
         )
         .await?;
     Ok((flags, was_cache_hit, had_deserialization_errors))
@@ -245,6 +258,7 @@ async fn token_verification_cache_or_fallback(
     redis_writer: Arc<dyn RedisClient + Send + Sync>,
     pg_client: PostgresReader,
     token: &str,
+    team_cache_ttl_seconds: Option<u64>,
 ) -> Result<(String, bool), FlagError> {
     let ((_team, token_string), was_cache_hit) =
         cache_or_fallback::<TokenVerificationCache, str, (Team, String)>(
@@ -256,6 +270,7 @@ async fn token_verification_cache_or_fallback(
                 db_reads_counter: DB_TEAM_READS_COUNTER,
                 cache_errors_counter: TEAM_CACHE_ERRORS_COUNTER,
             },
+            team_cache_ttl_seconds,
         )
         .await?;
     Ok((token_string, was_cache_hit))
@@ -274,6 +289,8 @@ pub struct FlagService {
     redis_reader: Arc<dyn RedisClient + Send + Sync>,
     redis_writer: Arc<dyn RedisClient + Send + Sync>,
     pg_client: PostgresReader,
+    team_cache_ttl_seconds: u64,
+    flags_cache_ttl_seconds: u64,
 }
 
 impl FlagService {
@@ -281,11 +298,15 @@ impl FlagService {
         redis_reader: Arc<dyn RedisClient + Send + Sync>,
         redis_writer: Arc<dyn RedisClient + Send + Sync>,
         pg_client: PostgresReader,
+        team_cache_ttl_seconds: u64,
+        flags_cache_ttl_seconds: u64,
     ) -> Self {
         Self {
             redis_reader,
             redis_writer,
             pg_client,
+            team_cache_ttl_seconds,
+            flags_cache_ttl_seconds,
         }
     }
 
@@ -302,6 +323,7 @@ impl FlagService {
             self.redis_writer.clone(),
             self.pg_client.clone(),
             token,
+            Some(self.team_cache_ttl_seconds),
         )
         .await?;
 
@@ -327,6 +349,7 @@ impl FlagService {
             self.redis_writer.clone(),
             self.pg_client.clone(),
             token,
+            Some(self.team_cache_ttl_seconds),
         )
         .await?;
 
@@ -351,6 +374,7 @@ impl FlagService {
             self.redis_writer.clone(),
             self.pg_client.clone(),
             project_id,
+            Some(self.flags_cache_ttl_seconds),
         )
         .await?;
 
@@ -399,6 +423,8 @@ mod tests {
             redis_client.clone(),
             redis_client.clone(),
             pg_client.clone(),
+            432000, // team_cache_ttl_seconds
+            432000, // flags_cache_ttl_seconds
         );
 
         // Test valid token in Redis
@@ -438,6 +464,8 @@ mod tests {
             redis_client.clone(),
             redis_client.clone(),
             pg_client.clone(),
+            432000, // team_cache_ttl_seconds
+            432000, // flags_cache_ttl_seconds
         );
 
         // Test fetching from Redis
@@ -458,6 +486,8 @@ mod tests {
             redis_client.clone(),
             redis_client.clone(),
             pg_client.clone(),
+            432000, // team_cache_ttl_seconds
+            432000, // flags_cache_ttl_seconds
         );
 
         let result = flag_service
@@ -567,14 +597,21 @@ mod tests {
             ],
         };
 
-        FeatureFlagList::update_flags_in_redis(redis_client.clone(), team.project_id, &mock_flags)
-            .await
-            .expect("Failed to insert mock flags in Redis");
+        FeatureFlagList::update_flags_in_redis(
+            redis_client.clone(),
+            team.project_id,
+            &mock_flags,
+            None,
+        )
+        .await
+        .expect("Failed to insert mock flags in Redis");
 
         let flag_service = FlagService::new(
             redis_client.clone(),
             redis_client.clone(),
             pg_client.clone(),
+            432000, // team_cache_ttl_seconds
+            432000, // flags_cache_ttl_seconds
         );
 
         // Test fetching from Redis
@@ -671,7 +708,13 @@ mod tests {
         let reader: Arc<dyn RedisClient + Send + Sync> = Arc::new(mock_reader.clone());
         let writer: Arc<dyn RedisClient + Send + Sync> = Arc::new(mock_writer.clone());
 
-        let flag_service = FlagService::new(reader, writer, context.non_persons_reader.clone());
+        let flag_service = FlagService::new(
+            reader,
+            writer,
+            context.non_persons_reader.clone(),
+            432000, // team_cache_ttl_seconds
+            432000, // flags_cache_ttl_seconds
+        );
 
         let result = flag_service
             .get_flags_from_cache_or_pg(team.project_id)
@@ -713,7 +756,13 @@ mod tests {
         let reader: Arc<dyn RedisClient + Send + Sync> = Arc::new(mock_reader.clone());
         let writer: Arc<dyn RedisClient + Send + Sync> = Arc::new(mock_writer.clone());
 
-        let flag_service = FlagService::new(reader, writer, context.non_persons_reader.clone());
+        let flag_service = FlagService::new(
+            reader,
+            writer,
+            context.non_persons_reader.clone(),
+            432000, // team_cache_ttl_seconds
+            432000, // flags_cache_ttl_seconds
+        );
 
         let result = flag_service
             .get_flags_from_cache_or_pg(team.project_id)
@@ -744,6 +793,8 @@ mod tests {
             redis_client.clone(),
             redis_client.clone(),
             pg_client.clone(),
+            432000, // team_cache_ttl_seconds
+            432000, // flags_cache_ttl_seconds
         );
 
         // Test 1: Non-existent token should return TokenValidationError (RowNotFound case)

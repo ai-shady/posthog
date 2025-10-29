@@ -95,6 +95,7 @@ pub trait Client {
         v: String,
         format: RedisValueFormat,
     ) -> Result<(), CustomRedisError>;
+    async fn setex(&self, k: String, v: String, seconds: u64) -> Result<(), CustomRedisError>;
     async fn set_nx_ex(&self, k: String, v: String, seconds: u64)
         -> Result<bool, CustomRedisError>;
     async fn set_nx_ex_with_format(
@@ -220,6 +221,14 @@ impl Client for RedisClient {
         };
         let mut conn = self.connection.clone();
         let results = conn.set(k, bytes);
+        let fut = timeout(Duration::from_millis(get_redis_timeout_ms()), results).await?;
+        Ok(fut?)
+    }
+
+    async fn setex(&self, k: String, v: String, seconds: u64) -> Result<(), CustomRedisError> {
+        let bytes = serde_pickle::to_vec(&v, Default::default())?;
+        let mut conn = self.connection.clone();
+        let results = conn.set_ex(k, bytes, seconds);
         let fut = timeout(Duration::from_millis(get_redis_timeout_ms()), results).await?;
         Ok(fut?)
     }
@@ -390,6 +399,33 @@ impl MockRedisClient {
         self.lock_calls().clone()
     }
 
+    /// Helper method to verify setex calls with TTL
+    pub fn get_setex_calls_with_ttl(&self) -> Vec<(String, String, u64)> {
+        self.lock_calls()
+            .iter()
+            .filter_map(|call| {
+                if call.op == "setex" {
+                    if let MockRedisValue::StringWithTTL(value, ttl) = &call.value {
+                        Some((call.key.clone(), value.clone(), *ttl))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Helper method to check if a key was set with specific TTL
+    pub fn was_setex_called_with_ttl(&self, key: &str, expected_ttl: u64) -> bool {
+        self.lock_calls().iter().any(|call| {
+            call.op == "setex"
+                && call.key == key
+                && matches!(&call.value, MockRedisValue::StringWithTTL(_, ttl) if *ttl == expected_ttl)
+        })
+    }
+
     pub fn set_nx_ex_ret(&mut self, key: &str, ret: Result<bool, CustomRedisError>) -> Self {
         self.set_nx_ex_ret.insert(key.to_owned(), ret);
         self.clone()
@@ -544,6 +580,21 @@ impl Client for MockRedisClient {
             op: "set_with_format".to_string(),
             key: key.clone(),
             value: MockRedisValue::StringWithFormat(value.clone(), format),
+        });
+
+        self.set_ret.get(&key).cloned().unwrap_or(Ok(()))
+    }
+
+    async fn setex(
+        &self,
+        key: String,
+        value: String,
+        seconds: u64,
+    ) -> Result<(), CustomRedisError> {
+        self.lock_calls().push(MockRedisCall {
+            op: "setex".to_string(),
+            key: key.clone(),
+            value: MockRedisValue::StringWithTTL(value.clone(), seconds),
         });
 
         self.set_ret.get(&key).cloned().unwrap_or(Ok(()))
