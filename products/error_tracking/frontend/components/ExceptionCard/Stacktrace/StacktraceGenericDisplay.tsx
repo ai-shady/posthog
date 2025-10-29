@@ -1,4 +1,5 @@
-import { useActions, useValues } from 'kea'
+import { useValues } from 'kea'
+import posthog from 'posthog-js'
 import { useCallback } from 'react'
 
 import { LemonSkeleton } from '@posthog/lemon-ui'
@@ -21,8 +22,7 @@ export function StacktraceGenericDisplay({
     renderEmpty,
 }: StacktraceBaseDisplayProps): JSX.Element {
     const { exceptionAttributes, hasStacktrace } = useValues(errorPropertiesLogic)
-    const { loading, showAllFrames } = useValues(exceptionCardLogic)
-    const { markStacktraceExplored } = useActions(exceptionCardLogic)
+    const { issueId, loading, showAllFrames } = useValues(exceptionCardLogic)
     const { runtime } = exceptionAttributes || {}
     const renderExceptionHeader = useCallback(
         ({ type, value, loading, part }: ExceptionHeaderProps): JSX.Element => {
@@ -48,7 +48,9 @@ export function StacktraceGenericDisplay({
                     showAllFrames={showAllFrames}
                     renderExceptionHeader={renderExceptionHeader}
                     onFrameContextClick={(_, e) => cancelEvent(e)}
-                    onFirstFrameExpanded={markStacktraceExplored}
+                    onFirstFrameExpanded={() => {
+                        posthog.capture('error_tracking_stacktrace_explored', { issue_id: issueId })
+                    }}
                 />
             )}
             {!loading && !hasStacktrace && renderEmpty()}

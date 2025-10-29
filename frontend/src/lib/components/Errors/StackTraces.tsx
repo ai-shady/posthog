@@ -2,7 +2,7 @@ import './StackTraces.scss'
 
 import clsx from 'clsx'
 import { useActions, useValues } from 'kea'
-import { MouseEvent, useEffect, useRef } from 'react'
+import { MouseEvent, useEffect, useState } from 'react'
 import { P, match } from 'ts-pattern'
 
 import { IconBox } from '@posthog/icons'
@@ -67,12 +67,12 @@ export function ChainedStackTraces({
 }): JSX.Element {
     const { loadFromRawIds } = useActions(stackFrameLogic)
     const { exceptionList, getExceptionFingerprint } = useValues(errorPropertiesLogic)
-    const hasCalledOnFirstExpanded = useRef(false)
+    const [hasCalledOnFirstExpanded, setHasCalledOnFirstExpanded] = useState<boolean>(false)
 
     const handleFrameExpanded = (): void => {
-        if (!hasCalledOnFirstExpanded.current) {
-            hasCalledOnFirstExpanded.current = true
-            onFirstFrameExpanded?.()
+        if (onFirstFrameExpanded && !hasCalledOnFirstExpanded) {
+            setHasCalledOnFirstExpanded(true)
+            onFirstFrameExpanded()
         }
     }
 
@@ -109,7 +109,7 @@ export function ChainedStackTraces({
                                 showAllFrames={showAllFrames}
                                 embedded={embedded}
                                 onFrameContextClick={onFrameContextClick}
-                                onFirstFrameExpanded={handleFrameExpanded}
+                                onFrameExpanded={handleFrameExpanded}
                             />
                         )}
                     </div>
@@ -138,13 +138,13 @@ function Trace({
     showAllFrames,
     embedded,
     onFrameContextClick,
-    onFirstFrameExpanded,
+    onFrameExpanded,
 }: {
     frames: ErrorTrackingStackFrame[]
     showAllFrames: boolean
     embedded: boolean
+    onFrameExpanded: () => void
     onFrameContextClick?: FrameContextClickHandler
-    onFirstFrameExpanded?: () => void
 }): JSX.Element | null {
     const { stackFrameRecords } = useValues(stackFrameLogic)
     const displayFrames = showAllFrames ? frames : frames.filter((f) => f.in_app)
@@ -165,19 +165,7 @@ function Trace({
         }
     })
 
-    return (
-        <LemonCollapse
-            embedded={embedded}
-            multiple
-            panels={panels}
-            size="xsmall"
-            onChange={(activeKeys) => {
-                if (activeKeys.length > 0) {
-                    onFirstFrameExpanded?.()
-                }
-            }}
-        />
-    )
+    return <LemonCollapse embedded={embedded} multiple panels={panels} size="xsmall" onChange={onFrameExpanded} />
 }
 
 export function FrameHeaderDisplay({ frame }: { frame: ErrorTrackingStackFrame }): JSX.Element {

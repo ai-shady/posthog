@@ -55,11 +55,9 @@ export const stackFrameLogic = kea<stackFrameLogicType>([
     listeners(() => ({
         loadFromRawIdsSuccess: ({ stackFrameRecords }) => {
             const recordsWithContext = Object.values(stackFrameRecords).filter((record) => record.context)
-            if (recordsWithContext.length > 0) {
-                posthog.capture('error_tracking_source_code_resolved', {
-                    frames_count: recordsWithContext.length,
-                })
-            }
+            posthog.capture('error_tracking_source_code_resolved', {
+                frame_count: recordsWithContext.length,
+            })
         },
     })),
 ])
