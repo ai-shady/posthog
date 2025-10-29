@@ -1130,6 +1130,14 @@ class ErrorTrackingIssueAssigneeType(StrEnum):
     ROLE = "role"
 
 
+class ErrorTrackingIssueCohort(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    id: float
+    name: str
+
+
 class OrderBy1(StrEnum):
     LAST_SEEN = "last_seen"
     FIRST_SEEN = "first_seen"
@@ -8698,6 +8706,7 @@ class ErrorTrackingIssue(BaseModel):
     )
     aggregations: Optional[ErrorTrackingIssueAggregations] = None
     assignee: Optional[ErrorTrackingIssueAssignee] = None
+    cohort: Optional[ErrorTrackingIssueCohort] = None
     description: Optional[str] = None
     external_issues: Optional[list[ErrorTrackingExternalReference]] = None
     first_event: Optional[FirstEvent] = None
@@ -8781,6 +8790,7 @@ class ErrorTrackingRelationalIssue(BaseModel):
         extra="forbid",
     )
     assignee: Optional[ErrorTrackingIssueAssignee] = None
+    cohort: Optional[ErrorTrackingIssueCohort] = None
     description: Optional[str] = None
     external_issues: Optional[list[ErrorTrackingExternalReference]] = None
     first_seen: datetime
@@ -12403,6 +12413,7 @@ class ErrorTrackingCorrelatedIssue(BaseModel):
         extra="forbid",
     )
     assignee: Optional[ErrorTrackingIssueAssignee] = None
+    cohort: Optional[ErrorTrackingIssueCohort] = None
     description: Optional[str] = None
     event: str
     external_issues: Optional[list[ErrorTrackingExternalReference]] = None
