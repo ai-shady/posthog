@@ -6,7 +6,7 @@ from posthog import settings
 from posthog.models.event.sql import EVENTS_DATA_TABLE
 from posthog.models.person.sql import PERSON_DISTINCT_ID_OVERRIDES_TABLE
 
-from .common.overrides_manager import OverridesSnapshotTable
+from .common.overrides_manager import OverridesSnapshotDictionary, OverridesSnapshotTable
 
 
 @dataclass
@@ -50,7 +50,9 @@ class SessionOverridesSnapshotTable(OverridesSnapshotTable):
 
 
 @dataclass
-class SessionOverridesSnapshotDictionary(SessionOverridesSnapshotTable):
+class SessionOverridesSnapshotDictionary(OverridesSnapshotDictionary):
+    source: SessionOverridesSnapshotTable
+
     @property
     def alter_table_name(self) -> str:
         return EVENTS_DATA_TABLE()
